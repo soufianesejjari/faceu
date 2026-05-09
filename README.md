@@ -93,6 +93,7 @@ FaceU uses the **ArcFace w600k_r50** model (`w600k_r50.onnx`) for face embedding
 mkdir -p models
 # Download the model from the InsightFace model zoo
 # See: https://github.com/deepinsight/insightface/tree/master/model_zoo
+# And: https://github.com/SthPhoenix/InsightFace-REST
 # The file should be placed at: models/w600k_r50.onnx
 ```
 
