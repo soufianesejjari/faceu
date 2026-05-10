@@ -208,3 +208,4 @@ The current system treats each camera as an independent silo. Cross-camera track
 9. **InsightFace** — Deng, J., Guo, J., et al. (2022). *InsightFace: 2D and 3D Face Analysis Project.* [GitHub](https://github.com/deepinsight/insightface)
 
 10. **Face Recognition (Python library)** — Geitgey, A. (2017). *face_recognition: Recognize and manipulate faces from Python.* [GitHub](https://github.com/ageitgey/face_recognition)
+11. **Chokepoint Dataset** — ARMA. *Chokepoint: A Dataset for People Flow Counting and Re-identification.* [https://arma.sourceforge.net/chokepoint/](https://arma.sourceforge.net/chokepoint/) — Used for demo.
