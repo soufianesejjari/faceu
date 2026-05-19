@@ -140,7 +140,9 @@ def feed_stream(name):
             # Only encode and send frame if enough time has passed
             time_since_last = current_time - last_frame_time
             if time_since_last >= frame_interval:
-                ret, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                # Frames are stored as RGB internally; cv2.imencode needs BGR.
+                ret, jpeg = cv2.imencode('.jpg', cv2.cvtColor(frame, cv2.COLOR_RGB2BGR),
+                                         [cv2.IMWRITE_JPEG_QUALITY, 85])
                 if ret:
                     yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n')
                     last_frame_time = current_time
@@ -378,9 +380,13 @@ def entry_exit_log():
 
 @app.route('/entry_exit_image/<int:id>')
 def entry_exit_image(id):
-    image_path = os.path.join(entry_exit_persistence.save_dir, f'raw_{id}.jpg')
-    if not os.path.exists(image_path):
+    import glob as _glob
+    matches = sorted(_glob.glob(
+        os.path.join(entry_exit_persistence.save_dir, f'face_{id}_*.jpg')
+    ))
+    if not matches:
         return '', 404
+    image_path = matches[0]
     return send_from_directory(os.path.dirname(image_path), os.path.basename(image_path))
 
 @app.route('/face_datasets')

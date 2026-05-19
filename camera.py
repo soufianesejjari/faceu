@@ -83,8 +83,11 @@ class CameraBase:
             
             ret, frame = self.cap.read()
             self.last_read_success = ret
-            
+
             if ret and frame is not None:
+                # VideoCapture always returns BGR; convert to RGB once here so
+                # every downstream consumer (recognition, webserver) sees RGB.
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 self.handle_frame(frame, current_time)
             else:
                 # No frame available small sleep to prevent busy waiting
