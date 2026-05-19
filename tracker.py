@@ -47,17 +47,26 @@ class FaceSortTracker:
 class KalmanBoxTracker:
     def __init__(self, bbox):
         # bbox: [x1, y1, x2, y2]
-        self.bbox = bbox
+        self.bbox = np.array(bbox, dtype=np.float32)
+        self.velocity = np.zeros(4, dtype=np.float32)
         self.id = TrackIDCounter.get_next()
         self.hits = 1
         self.no_losses = 0
+
     def update(self, bbox):
-        self.bbox = bbox
+        new_bbox = np.array(bbox, dtype=np.float32)
+        delta = new_bbox - self.bbox
+        # Exponential smoothing: blend new delta with previous velocity
+        self.velocity = 0.7 * delta + 0.3 * self.velocity
+        self.bbox = new_bbox
         self.hits += 1
         self.no_losses = 0
+
     def predict(self):
         self.no_losses += 1
-        return self.bbox
+        # Project forward by velocity × frames since last match
+        return self.bbox + self.velocity * self.no_losses
+
     def get_state(self):
         return self.bbox
 

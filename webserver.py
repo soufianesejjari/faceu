@@ -168,7 +168,7 @@ def advanced(name):
         'no_face_timeout': 5.0,
         'consecutive_frames': 3,
         'fiaq_threshold': 0.4,
-        'tracker_max_age': 3,
+        'tracker_max_age': 8,
         'tracker_min_hits': 1,
         'tracker_iou_threshold': 0.2,
         'detector_conf_thresh': 0.6

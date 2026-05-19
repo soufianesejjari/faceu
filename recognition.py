@@ -143,8 +143,7 @@ class FaceRecognizer:
             tface = self.track_id_to_face.get(track_id)
             if tface is not None:
                 tface.recognition_pending = False
-                tface.identity = name
-                tface.identity_sim = float(sim)
+                tface.add_recognition_result(name, float(sim))
 
     # ------------------------------------------------------------------ #
     #  Face detection + tracking + recognition submission                 #
@@ -359,6 +358,9 @@ class FaceRecognizer:
             tface.current_zone = new_zone
 
 
+_VOTE_WINDOW = 5  # number of recent recognition results kept per track
+
+
 class TrackedFace:
     def __init__(self, face_id, bbox, timestamp, left_eye=None, right_eye=None):
         self.face_id = face_id
@@ -375,6 +377,28 @@ class TrackedFace:
         self.identity_sim = 0.0
         self.best_quality = 0.0
         self.recognition_pending = False
+        # Voting: list of (name, sim) from the last _VOTE_WINDOW results
+        self._votes: list = []
+
+    def add_recognition_result(self, name: str, sim: float):
+        """Record a new result and recompute voted identity."""
+        self._votes.append((name, sim))
+        if len(self._votes) > _VOTE_WINDOW:
+            self._votes.pop(0)
+
+        # Count votes per name
+        counts: dict = {}
+        sims: dict = {}
+        for n, s in self._votes:
+            counts[n] = counts.get(n, 0) + 1
+            sims.setdefault(n, []).append(s)
+
+        # Pick the name with the most votes; tie-break by average similarity
+        winner = max(counts, key=lambda n: (counts[n], sum(sims[n]) / len(sims[n])))
+        avg_sim = sum(sims[winner]) / len(sims[winner])
+
+        self.identity = winner
+        self.identity_sim = avg_sim
 
     def update(self, bbox, timestamp, left_eye=None, right_eye=None):
         self.bbox = bbox
@@ -393,3 +417,4 @@ class TrackedFace:
         self.identity_sim = 0.0
         self.best_quality = 0.0
         self.recognition_pending = False
+        self._votes = []
