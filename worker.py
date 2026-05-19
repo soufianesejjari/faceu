@@ -1,58 +1,94 @@
 import numpy as np
 import multiprocessing as mp
-import cv2
 import os
 
-from init import get_recognizer, get_embeddings
+from init import get_recognizer, get_embeddings, reload_embeddings
 
 
-# Set multiprocessing start method to 'fork' for lower overhead
 try:
     mp.set_start_method("fork")
 except RuntimeError:
     pass
 
+_RELOAD_SENTINEL = "__RELOAD__"
+
+
 def _recognition_worker(input_queue, output_queue):
-    recognizer_session, recognizer_input_name, recognizer_output_name = get_recognizer()
+    recognizer_session, in_name, out_name = get_recognizer()
     known_embeddings, known_names = get_embeddings()
+
     while True:
         item = input_queue.get()
         if item is None:
             break
-        job_id, face_crop = item
-        face_crop = np.ascontiguousarray(face_crop)
-        # Preprocess
-        face_image = cv2.resize(face_crop, (112, 112))
-        face_image = face_image.astype(np.float32) * (2.0/255.0) - 1.0
-        recognizer_input = np.expand_dims(np.transpose(face_image, (2, 0, 1)), axis=0)
-        curr_emb = recognizer_session.run([recognizer_output_name], {recognizer_input_name: recognizer_input})[0].flatten()
-        curr_emb_norm = curr_emb / np.linalg.norm(curr_emb)
-        similarities = np.dot(known_embeddings, curr_emb_norm)
-        best_match_index = np.argmax(similarities)
-        best_sim = similarities[best_match_index]
-        name = known_names[best_match_index] if best_sim >= 0.4 else "Unknown"
+
+        job_id, face_rgb = item
+
+        if job_id == _RELOAD_SENTINEL:
+            reload_embeddings()
+            known_embeddings, known_names = get_embeddings()
+            continue
+
+        # face_rgb is already 112×112 RGB uint8 (aligned, quality-checked)
+        face = np.ascontiguousarray(face_rgb, dtype=np.float32)
+        face = face * (2.0 / 255.0) - 1.0
+        recognizer_input = np.expand_dims(np.transpose(face, (2, 0, 1)), axis=0)
+
+        curr_emb = recognizer_session.run([out_name], {in_name: recognizer_input})[0].flatten()
+        norm = np.linalg.norm(curr_emb)
+        if norm > 0:
+            curr_emb /= norm
+
+        if known_embeddings is not None and len(known_embeddings) > 0:
+            similarities = np.dot(known_embeddings, curr_emb)
+            best_idx = int(np.argmax(similarities))
+            best_sim = float(similarities[best_idx])
+            name = known_names[best_idx] if best_sim >= 0.4 else "Unknown"
+        else:
+            best_sim = 0.0
+            name = "Unknown"
+
         output_queue.put((job_id, name, best_sim))
+
 
 class FaceRecognitionWorker:
     def __init__(self, num_workers=None):
         if num_workers is None:
-            num_workers = os.cpu_count() or 1
+            # On a Pi 5 (4 cores) use 2 workers: leaves headroom for capture+tracking.
+            num_workers = max(1, min(2, (os.cpu_count() or 2) // 2))
         self.num_workers = num_workers
-        self.input_queue = mp.Queue()
+        self.input_queue = mp.Queue(maxsize=num_workers * 4)  # bounded back-pressure
         self.output_queue = mp.Queue()
-        self.procs = [mp.Process(target=_recognition_worker, args=(self.input_queue, self.output_queue)) for _ in range(self.num_workers)]
+        self.procs = [
+            mp.Process(target=_recognition_worker,
+                       args=(self.input_queue, self.output_queue), daemon=True)
+            for _ in range(self.num_workers)
+        ]
         for p in self.procs:
             p.start()
-    def recognize_async(self, job_id, face_crop):
-        face_crop = np.ascontiguousarray(face_crop)
-        self.input_queue.put((job_id, face_crop))
+
+    def recognize_async(self, job_id, face_rgb):
+        try:
+            self.input_queue.put_nowait((job_id, np.ascontiguousarray(face_rgb)))
+        except Exception:
+            pass  # queue full — drop this frame, a better one will come
+
     def get_result(self, block=False, timeout=None):
         try:
             return self.output_queue.get(block=block, timeout=timeout)
         except Exception:
             return None
+
+    def reload_embeddings(self):
+        """Signal all workers to reload embeddings from disk."""
+        for _ in range(self.num_workers):
+            try:
+                self.input_queue.put_nowait((_RELOAD_SENTINEL, None))
+            except Exception:
+                pass
+
     def close(self):
         for _ in range(self.num_workers):
             self.input_queue.put(None)
         for p in self.procs:
-            p.join()
+            p.join(timeout=5)
