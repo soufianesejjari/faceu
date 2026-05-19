@@ -415,4 +415,4 @@ def dataset_image(user_id, filename):
 if __name__ == '__main__':
     load_config()
     restore_cameras()
-    app.run(host='0.0.0.0', port=8080)
+    app.run(host='0.0.0.0', port=8080, ssl_context=('cert.pem', 'key.pem'))
