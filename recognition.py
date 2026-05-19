@@ -404,7 +404,22 @@ class TrackedFace:
         self._votes: list = []
 
     def add_recognition_result(self, name: str, sim: float):
-        """Record a new result and recompute voted identity."""
+        """Record a new result and recompute voted identity.
+
+        Unknown results are NOT added to the vote window.
+        'Unknown' means the model had no confident match — it is not a
+        person identity and should not drown out future correct results.
+        """
+        if name == 'Unknown':
+            # Don't downgrade an already-identified face to Unknown
+            # based on one bad frame. Just leave identity as-is.
+            return
+
+        # First real name found: wipe any stale Unknown state so the
+        # old "no-match" frames don't dilute this result via old vote window.
+        if self.identity == 'Unknown':
+            self._votes.clear()
+
         self._votes.append((name, sim))
         if len(self._votes) > _VOTE_WINDOW:
             self._votes.pop(0)

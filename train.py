@@ -4,8 +4,14 @@ import os
 import pickle
 import logging
 import threading
+from pathlib import Path
+from dotenv import load_dotenv
 from init import initialize_shared, get_recognizer, reload_embeddings, get_model_hash
 from face_utils import FaceDetector, align_face
+
+# Read .env so train.py uses the same model as the live server
+load_dotenv(dotenv_path=Path(__file__).parent / ".env")
+RECOGNITION_MODEL = os.getenv("RECOGNITION_MODEL", "w600k_r50.onnx")
 
 DATASET_PATH = "dataset"
 EMBEDDINGS_FILE = "known_faces_embeddings.pkl"
@@ -55,45 +61,30 @@ def preprocess_for_recognizer(image_rgb: np.ndarray, input_shape: tuple) -> np.n
 
 
 def retrain_and_save_embeddings():
-    """Scan dataset/, generate embeddings, save to pickle.
+    """Scan dataset/, generate embeddings with the current model, save to pickle.
 
-    Skips people already present in the saved file.
-    Stamps the model hash so mismatches can be detected at load time.
+    Always regenerates ALL embeddings to ensure they match the active model.
+    If the model changed (e.g. w600k_r50 → edgeface_s), stale embeddings
+    from the old model will produce wrong similarities and cause all-Unknown.
     """
     with _retrain_lock:
         try:
-            initialize_shared("models", EMBEDDINGS_FILE)
+            initialize_shared("models", EMBEDDINGS_FILE,
+                              recognizer_model_name=RECOGNITION_MODEL)
             recognizer_session, in_name, out_name = get_recognizer()
             input_shape = tuple(recognizer_session.get_inputs()[0].shape[-2:][::-1])
+            logging.info(f"Training with model: {RECOGNITION_MODEL}  input: {input_shape}")
         except Exception as e:
             logging.error(f"Error loading ONNX model: {e}")
             return
 
-        existing_names: set = set()
-        existing_embeddings: list = []
-        existing_name_list: list = []
-
-        if os.path.exists(EMBEDDINGS_FILE):
-            try:
-                with open(EMBEDDINGS_FILE, "rb") as f:
-                    saved = pickle.load(f)
-                existing_names = set(saved.get("names", []))
-                existing_embeddings = saved.get("embeddings", [])
-                existing_name_list = saved.get("names", [])
-                logging.info(f"Existing embeddings loaded; skipping: {existing_names}")
-            except Exception as e:
-                logging.warning(f"Could not load existing embeddings: {e}")
-
         new_embeddings = []
         new_names = []
 
-        logging.info("Scanning dataset for new persons …")
+        logging.info("Scanning dataset/ and regenerating all embeddings …")
         for person_name in sorted(os.listdir(DATASET_PATH)):
             person_dir = os.path.join(DATASET_PATH, person_name)
             if not os.path.isdir(person_dir):
-                continue
-            if person_name in existing_names:
-                logging.info(f"  skip {person_name} (already embedded)")
                 continue
 
             count = 0
@@ -112,21 +103,17 @@ def retrain_and_save_embeddings():
             logging.info(f"  {person_name}: {count} images processed")
 
         if not new_embeddings:
-            logging.info("No new embeddings to add.")
+            logging.info("No images found in dataset/.")
             return
-
-        all_embeddings = existing_embeddings + new_embeddings
-        all_names = existing_name_list + new_names
 
         with open(EMBEDDINGS_FILE, "wb") as f:
             pickle.dump({
-                "embeddings":  all_embeddings,
-                "names":       all_names,
+                "embeddings":  new_embeddings,
+                "names":       new_names,
                 "model_hash":  get_model_hash(),
             }, f)
 
-        total = len(all_embeddings)
-        logging.info(f"Saved {total} embeddings to {EMBEDDINGS_FILE}")
+        logging.info(f"Saved {len(new_embeddings)} embeddings to {EMBEDDINGS_FILE}")
         reload_embeddings()
 
 
