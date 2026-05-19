@@ -125,12 +125,18 @@ class EntryExitPersistenceThread(threading.Thread):
 
     def _cleanup_pending(self, lost_id):
         self.cursor.execute(
-            "DELETE FROM entry_exit WHERE id = ? AND direction = 'pending'",
-            (lost_id,)
+            "SELECT direction FROM entry_exit WHERE id = ?", (lost_id,)
         )
-        self.conn.commit()
-        for img_path in glob.glob(os.path.join(self.save_dir, f"face_{lost_id}_*.jpg")):
-            try:
-                os.remove(img_path)
-            except OSError:
-                pass
+        row = self.cursor.fetchone()
+        direction = row[0] if row else 'pending'
+
+        if direction == 'pending':
+            # Track never crossed a line — safe to purge record and images
+            self.cursor.execute("DELETE FROM entry_exit WHERE id = ?", (lost_id,))
+            self.conn.commit()
+            for img_path in glob.glob(os.path.join(self.save_dir, f"face_{lost_id}_*.jpg")):
+                try:
+                    os.remove(img_path)
+                except OSError:
+                    pass
+        # If direction is 'entered'/'exited' keep both the DB row and the images

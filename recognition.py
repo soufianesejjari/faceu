@@ -137,13 +137,14 @@ class FaceRecognizer:
             track_id = self._pending_jobs.pop(job_id, None)
             if track_id is None:
                 continue
-            tface = self.track_id_to_face.get(track_id)
-            if tface is None:
-                continue
-            tface.recognition_pending = False
-            tface.identity = name
-            tface.identity_sim = float(sim)
+            # Always write to DB — face may have left frame before result arrived
             self.entry_exit_persistence.update_user(track_id, name)
+            # Update live overlay only if track is still visible
+            tface = self.track_id_to_face.get(track_id)
+            if tface is not None:
+                tface.recognition_pending = False
+                tface.identity = name
+                tface.identity_sim = float(sim)
 
     # ------------------------------------------------------------------ #
     #  Face detection + tracking + recognition submission                 #
@@ -251,10 +252,17 @@ class FaceRecognizer:
                 self.recognition_worker.recognize_async(job_id, aligned_112)
                 tface.recognition_pending = True
 
-            color = (0, 200, 80) if tface.identity != 'Unknown' else (255, 165, 0)
+            if tface.recognition_pending:
+                color = (0, 200, 255)   # cyan = queued, waiting for worker
+                status = "Queued"
+            elif tface.identity != 'Unknown':
+                color = (0, 200, 80)    # green = recognised
+                status = f"{tface.identity} ({tface.identity_sim:.2f})"
+            else:
+                color = (255, 165, 0)   # orange = unknown
+                status = "Unknown"
             cv2.rectangle(frame_rgb, (x1, y1), (x2, y2), color, 2)
-            sim_str = f"{tface.identity_sim:.2f}" if tface.identity_sim > 0 else "?"
-            cv2.putText(frame_rgb, f"{label} ({sim_str})", (x1 + 5, y1 - 10),
+            cv2.putText(frame_rgb, f"ID {track_id} | {status}", (x1 + 5, y1 - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
         return track_id_to_face, last_face_detected_time
