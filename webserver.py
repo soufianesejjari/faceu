@@ -381,13 +381,16 @@ def entry_exit_log():
 @app.route('/entry_exit_image/<int:id>')
 def entry_exit_image(id):
     import glob as _glob
-    matches = sorted(_glob.glob(
-        os.path.join(entry_exit_persistence.save_dir, f'face_{id}_*.jpg')
-    ))
+    save_dir = os.path.abspath(entry_exit_persistence.save_dir)
+    # Try new naming pattern first, fall back to legacy raw_{id}.jpg
+    matches = sorted(_glob.glob(os.path.join(save_dir, f'face_{id}_*.jpg')))
+    if not matches:
+        legacy = os.path.join(save_dir, f'raw_{id}.jpg')
+        if os.path.exists(legacy):
+            matches = [legacy]
     if not matches:
         return '', 404
-    image_path = matches[0]
-    return send_from_directory(os.path.dirname(image_path), os.path.basename(image_path))
+    return send_from_directory(save_dir, os.path.basename(matches[0]))
 
 @app.route('/face_datasets')
 def face_datasets():
@@ -407,10 +410,11 @@ def face_datasets():
 
 @app.route('/dataset/<user_id>/<filename>')
 def dataset_image(user_id, filename):
-    image_path = os.path.join('dataset', user_id, filename)
+    directory = os.path.abspath(os.path.join('dataset', user_id))
+    image_path = os.path.join(directory, filename)
     if not os.path.exists(image_path):
         return '', 404
-    return send_from_directory(os.path.join('dataset', user_id), filename)
+    return send_from_directory(directory, filename)
 
 if __name__ == '__main__':
     load_config()
