@@ -6,3 +6,5 @@ models/
 camera_config.json
 entry_exit_log.db
 known_faces_embeddings.pkl
+benchmark_summary.txt
+benchmark_results.txt
