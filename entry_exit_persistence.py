@@ -40,6 +40,7 @@ class EntryExitPersistenceThread(threading.Thread):
             try:
                 task = self.q.get(timeout=0.5)
             except queue.Empty:
+                self._sync_pending_events()
                 continue
             handler = dispatch.get(task[0])
             if handler:
@@ -140,3 +141,45 @@ class EntryExitPersistenceThread(threading.Thread):
                 except OSError:
                     pass
         # If direction is 'entered'/'exited' keep both the DB row and the images
+
+    def _sync_pending_events(self):
+        webhook_url = os.environ.get('WEBHOOK_URL', '').strip()
+        if not webhook_url:
+            return
+
+        api_key = os.environ.get('WEBHOOK_API_KEY', '').strip()
+
+        # Select events that are ready to sync
+        self.cursor.execute(
+            "SELECT id, user, direction, timestamp FROM entry_exit "
+            "WHERE user != 'Unknown' AND direction != 'pending' AND synced = 0"
+        )
+        rows = self.cursor.fetchall()
+        if not rows:
+            return
+
+        import json
+        from urllib import request, error
+
+        for row in rows:
+            track_id, user, direction, ts = row
+            data = {
+                "id": track_id,
+                "user": user,
+                "action": direction,
+                "timestamp": ts
+            }
+            
+            req = request.Request(webhook_url, method="POST")
+            req.add_header('Content-Type', 'application/json')
+            if api_key:
+                req.add_header('x-api-key', api_key)
+            
+            try:
+                with request.urlopen(req, data=json.dumps(data).encode('utf-8'), timeout=5) as response:
+                    if response.status in (200, 201, 204):
+                        self.cursor.execute("UPDATE entry_exit SET synced = 1 WHERE id = ?", (track_id,))
+                        self.conn.commit()
+            except Exception as e:
+                print(f"[Webhook Error] Failed to sync event {track_id}: {e}")
+

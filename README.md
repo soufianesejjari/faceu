@@ -143,6 +143,55 @@ Open **Advanced Settings** for a camera to fine-tune:
 | `tracker_iou_threshold` | 0.2 | IoU threshold for associating detections with existing tracks. |
 | `detector_conf_thresh` | 0.6 | MediaPipe Pose minimum detection/tracking confidence. |
 
+### API & Webhooks
+
+FaceU exposes a REST API to query attendance logs and a webhook system to automatically push entry/exit events to external services in real-time.
+
+**1. Configuration**
+In your `.env` file, configure the following:
+```env
+API_KEY=your_secret_api_key_here
+WEBHOOK_URL=http://your-external-service.com/webhook
+WEBHOOK_API_KEY=your_webhook_api_key_here
+```
+
+**2. GET Attendance API**
+Retrieve the entry/exit log for known users.
+*   **Endpoint:** `GET /api/attendance`
+*   **Authentication:** Pass your API key via the `x-api-key` header or as a query parameter (`?api_key=your_secret_api_key_here`).
+*   **Parameters:** `date` (Optional, format: `YYYY-MM-DD`) - filters the results for a specific day.
+*   **Response:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": 1,
+      "user": "Soufiane",
+      "direction": "entered",
+      "timestamp": 1684345200.0,
+      "datetime": "2023-05-17T17:40:00"
+    }
+  ]
+}
+```
+
+**3. Webhook Integration**
+When a known person's entry/exit event is fully resolved, FaceU will automatically `POST` the event data to your configured `WEBHOOK_URL`.
+*   **Headers sent:**
+    *   `Content-Type: application/json`
+    *   `x-api-key: <WEBHOOK_API_KEY>` (if configured)
+*   **Payload sent:**
+```json
+{
+  "id": 1,
+  "user": "Soufiane",
+  "action": "entered",
+  "timestamp": 1684345200.0
+}
+```
+If the webhook endpoint is unreachable or returns an error, FaceU safely queues the event locally (via SQLite `synced = 0`) and will automatically retry delivery in the background until a `200`, `201`, or `204` success status is received.
+
 ## Future Work
 
 ### Better Tracking Algorithm

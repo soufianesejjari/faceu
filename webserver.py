@@ -33,6 +33,9 @@ DEFAULT_CONSECUTIVE_FRAMES    = _env("CONSECUTIVE_FRAMES",    3)
 DEFAULT_FIAQ_THRESHOLD        = _env("FIAQ_THRESHOLD",        0.40)
 DEFAULT_MIN_FACE_SIZE         = _env("MIN_FACE_SIZE",         50)
 DEFAULT_MOVEMENT_THRESHOLD    = _env("MOVEMENT_THRESHOLD",    1500)
+API_KEY                       = _env("API_KEY",               "")
+WEBHOOK_URL                   = _env("WEBHOOK_URL",           "")
+WEBHOOK_API_KEY               = _env("WEBHOOK_API_KEY",       "")
 
 logging.basicConfig(level=logging.INFO)
 logging.info(f"[config] model={DEFAULT_RECOGNITION_MODEL}  fps={DEFAULT_TARGET_FPS}"
@@ -380,6 +383,44 @@ def save_face_dataset(user_id):
         logging.error(f"Error in save_face_dataset: {str(e)}")
         return jsonify({'success': False, 'error': 'Internal server error'}), 500
 
+
+@app.route('/api/attendance', methods=['GET'])
+def api_attendance():
+    # Require API Key
+    provided_key = request.headers.get('x-api-key') or request.args.get('api_key')
+    if not API_KEY or provided_key != API_KEY:
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+
+    date_str = request.args.get('date', '')
+    query = "SELECT entry_exit.id, users.employee_id, entry_exit.direction, entry_exit.timestamp FROM entry_exit JOIN users ON entry_exit.user = users.employee_id WHERE entry_exit.user != 'Unknown' AND entry_exit.direction != 'pending'"
+    params = []
+
+    if date_str:
+        try:
+            dt = datetime.strptime(date_str, '%Y-%m-%d')
+            start_ts = datetime.combine(dt, datetime.min.time()).timestamp()
+            end_ts = datetime.combine(dt, datetime.max.time()).timestamp()
+            query += " AND timestamp BETWEEN ? AND ?"
+            params += [start_ts, end_ts]
+        except Exception:
+            return jsonify({'success': False, 'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
+
+    query += " ORDER BY timestamp DESC"
+    
+    cur = entry_exit_conn.cursor()
+    rows = cur.execute(query, params).fetchall()
+    
+    result = []
+    for row in rows:
+        result.append({
+            'id': row[0],
+            'user': row[1],
+            'direction': row[2],
+            'timestamp': row[3],
+            'datetime': datetime.fromtimestamp(row[3]).isoformat() if row[3] else None
+        })
+        
+    return jsonify({'success': True, 'data': result})
 
 @app.route('/entry_exit_log')
 def entry_exit_log():
