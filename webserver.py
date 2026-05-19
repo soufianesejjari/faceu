@@ -8,7 +8,35 @@ import json
 from datetime import datetime
 import sqlite3
 import numpy as np
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Load .env first — all defaults come from here
+load_dotenv(dotenv_path=Path(__file__).parent / ".env")
+
+def _env(key, default):
+    val = os.getenv(key, "")
+    if val == "":
+        return default
+    try:
+        return type(default)(val)
+    except (ValueError, TypeError):
+        return val
+
+# ── Live system defaults from .env ────────────────────────────────────────────
+DEFAULT_RECOGNITION_MODEL     = _env("RECOGNITION_MODEL",     "w600k_r50.onnx")
+DEFAULT_RECOGNITION_THRESHOLD = _env("RECOGNITION_THRESHOLD", 0.40)
+DEFAULT_TARGET_FPS            = _env("TARGET_FPS",            5)
+DEFAULT_MOTION_FPS            = _env("MOTION_FPS",            2)
+DEFAULT_NO_FACE_TIMEOUT       = _env("NO_FACE_TIMEOUT",       10.0)
+DEFAULT_CONSECUTIVE_FRAMES    = _env("CONSECUTIVE_FRAMES",    3)
+DEFAULT_FIAQ_THRESHOLD        = _env("FIAQ_THRESHOLD",        0.40)
+DEFAULT_MIN_FACE_SIZE         = _env("MIN_FACE_SIZE",         50)
+DEFAULT_MOVEMENT_THRESHOLD    = _env("MOVEMENT_THRESHOLD",    1500)
+
 logging.basicConfig(level=logging.INFO)
+logging.info(f"[config] model={DEFAULT_RECOGNITION_MODEL}  fps={DEFAULT_TARGET_FPS}"
+             f"  threshold={DEFAULT_RECOGNITION_THRESHOLD}  consecutive={DEFAULT_CONSECUTIVE_FRAMES}")
 
 from entry_exit_persistence import EntryExitPersistenceThread, DB_PATH
 entry_exit_persistence = EntryExitPersistenceThread.init_global()
@@ -19,7 +47,8 @@ from train import retrain_and_save_embeddings
 import threading
 initialize_shared(
     os.path.join(os.path.dirname(__file__), 'models'),
-    os.path.join(os.path.dirname(__file__), 'known_faces_embeddings.pkl')
+    os.path.join(os.path.dirname(__file__), 'known_faces_embeddings.pkl'),
+    recognizer_model_name=DEFAULT_RECOGNITION_MODEL,
 )
 from tracker import TrackIDCounter
 TrackIDCounter.initialize(last_id)
@@ -70,6 +99,18 @@ def load_config():
         with open(CONFIG_PATH, 'r') as f:
             data = json.load(f)
             settings_store.update(data.get('settings_store', {}))
+    # Apply .env values over any stale saved values.
+    # This ensures changing .env takes effect without manually
+    # re-saving every camera via the UI.
+    for name, s in settings_store.items():
+        s['fps']                   = DEFAULT_TARGET_FPS
+        s['recognition_threshold'] = DEFAULT_RECOGNITION_THRESHOLD
+        s['motion_fps']            = DEFAULT_MOTION_FPS
+        s['no_face_timeout']       = DEFAULT_NO_FACE_TIMEOUT
+        s['consecutive_frames']    = DEFAULT_CONSECUTIVE_FRAMES
+        s['fiaq_threshold']        = DEFAULT_FIAQ_THRESHOLD
+        s['min_face_size']         = DEFAULT_MIN_FACE_SIZE
+        s['movement_threshold']    = DEFAULT_MOVEMENT_THRESHOLD
 
 @app.route('/')
 def index():
@@ -159,19 +200,19 @@ def feed_stream(name):
 
 @app.route('/advanced/<name>', methods=['GET', 'POST'])
 def advanced(name):
-    # All advanced settings with defaults
+    # All advanced settings with defaults — sourced from .env
     default_settings = {
-        'recognition_threshold': 0.4,
-        'min_face_size': 50,
-        'movement_threshold': 3000,
-        'motion_fps': 2,
-        'no_face_timeout': 5.0,
-        'consecutive_frames': 3,
-        'fiaq_threshold': 0.4,
-        'tracker_max_age': 8,
-        'tracker_min_hits': 1,
+        'recognition_threshold': DEFAULT_RECOGNITION_THRESHOLD,
+        'min_face_size':         DEFAULT_MIN_FACE_SIZE,
+        'movement_threshold':    DEFAULT_MOVEMENT_THRESHOLD,
+        'motion_fps':            DEFAULT_MOTION_FPS,
+        'no_face_timeout':       DEFAULT_NO_FACE_TIMEOUT,
+        'consecutive_frames':    DEFAULT_CONSECUTIVE_FRAMES,
+        'fiaq_threshold':        DEFAULT_FIAQ_THRESHOLD,
+        'tracker_max_age':       8,
+        'tracker_min_hits':      1,
         'tracker_iou_threshold': 0.2,
-        'detector_conf_thresh': 0.6
+        'detector_conf_thresh':  0.6,
     }
     settings = settings_store.get(name, {})
     # Fill missing with defaults
@@ -197,18 +238,18 @@ def advanced(name):
 
 @app.route('/settings/<name>', methods=['GET', 'POST'])
 def camera_settings(name):
-    # Default settings
+    # Default settings — fps comes from .env TARGET_FPS
     default = {
-        'width': 640,
-        'height': 480,
-        'crop': False,
-        'x': 50,
-        'y': 50,
-        'w': 200,
-        'h': 150,
-        'fps': 5,
-        'rotate': 0,
-        'detection_mode': 'line'  # Default to line detection mode
+        'width':          640,
+        'height':         480,
+        'crop':           False,
+        'x':              50,
+        'y':              50,
+        'w':              200,
+        'h':              150,
+        'fps':            DEFAULT_TARGET_FPS,
+        'rotate':         0,
+        'detection_mode': 'line',
     }
     settings = settings_store.get(name, default.copy())
     if request.method == 'POST':
@@ -219,7 +260,7 @@ def camera_settings(name):
         settings['y'] = int(request.form.get('y', 50))
         settings['w'] = int(request.form.get('w', 200))
         settings['h'] = int(request.form.get('h', 150))
-        settings['fps'] = int(request.form.get('fps', 5))
+        settings['fps'] = int(request.form.get('fps', DEFAULT_TARGET_FPS))
         settings['rotate'] = int(request.form.get('rotate', 0))
         # Save detection mode and related settings
         detection_mode = request.form.get('detection_mode', 'line')
