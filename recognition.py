@@ -243,11 +243,33 @@ class FaceRecognizer:
                     track_id=track_id, image=raw_frame, timestamp=loop_start_time)
                 tface.raw_image_saved = True
 
-            # Submit to recognition worker only if quality improved meaningfully
-            if (not tface.recognition_pending and
-                    quality > tface.best_quality * 1.05 + 0.01):
-                tface.best_quality = quality
-                job_id = f"reco_{track_id}_{int(quality * 1000)}"
+            # ── Recognition submission logic ──────────────────────────────
+            # Two modes:
+            #   Still Unknown  → retry every quality-passing frame (with a
+            #                    short cooldown) so a clearer face is grabbed.
+            #   Already named  → only upgrade if a significantly better frame
+            #                    arrives (avoids noisy re-submissions).
+            _RECO_COOLDOWN = 0.5   # min seconds between jobs for the same track
+            time_since_last = loop_start_time - tface.last_reco_time
+
+            if tface.identity == 'Unknown':
+                # Always retry while unidentified, subject to cooldown and
+                # worker not already processing a job for this track.
+                should_submit = (
+                    not tface.recognition_pending
+                    and time_since_last >= _RECO_COOLDOWN
+                )
+            else:
+                # Already identified — only re-submit if quality improved >5%
+                should_submit = (
+                    not tface.recognition_pending
+                    and quality > tface.best_quality * 1.05 + 0.01
+                )
+
+            if should_submit:
+                tface.best_quality = max(tface.best_quality, quality)
+                tface.last_reco_time = loop_start_time
+                job_id = f"reco_{track_id}_{int(loop_start_time * 1000)}"
                 self._pending_jobs[job_id] = track_id
                 self.recognition_worker.recognize_async(job_id, aligned_112)
                 tface.recognition_pending = True
@@ -377,6 +399,7 @@ class TrackedFace:
         self.identity_sim = 0.0
         self.best_quality = 0.0
         self.recognition_pending = False
+        self.last_reco_time = 0.0   # timestamp of last recognition job submitted
         # Voting: list of (name, sim) from the last _VOTE_WINDOW results
         self._votes: list = []
 
@@ -417,4 +440,5 @@ class TrackedFace:
         self.identity_sim = 0.0
         self.best_quality = 0.0
         self.recognition_pending = False
+        self.last_reco_time = 0.0
         self._votes = []
