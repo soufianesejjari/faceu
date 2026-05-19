@@ -61,9 +61,13 @@ class FaceDetector:
             x2 = min(w, int(x2 + pad_x))
             y2 = min(h, int(y2 + pad_y))
 
-            # kps[0] = right_eye, kps[1] = left_eye (MediaPipe convention)
-            right_eye = (kps[0].x * w, kps[0].y * h)
-            left_eye = (kps[1].x * w, kps[1].y * h)
+            # MediaPipe uses the SUBJECT's perspective:
+            #   kps[0] = subject's right eye → appears on the LEFT in the camera image
+            #   kps[1] = subject's left eye  → appears on the RIGHT in the camera image
+            # align_face() expects (left_in_image, right_in_image) so the diff vector
+            # points left→right and the rotation angle is near 0° for a level face.
+            left_eye = (kps[0].x * w, kps[0].y * h)   # camera-left
+            right_eye = (kps[1].x * w, kps[1].y * h)  # camera-right
 
             detections.append(FaceDetection(x1, y1, x2, y2, left_eye, right_eye,
                                             float(det.score[0])))

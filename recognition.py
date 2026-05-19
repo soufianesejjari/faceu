@@ -151,6 +151,7 @@ class FaceRecognizer:
     # ------------------------------------------------------------------ #
 
     def detect_faces(self, frame_rgb, loop_start_time, track_id_to_face, last_face_detected_time):
+        raw_frame = frame_rgb.copy()  # full rotated frame — saved to log UI
         frame_height, frame_width = frame_rgb.shape[:2]
 
         raw_detections = self.face_detector.detect(frame_rgb)
@@ -237,10 +238,10 @@ class FaceRecognizer:
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 140, 255), 1)
                 continue
 
-            # Save best raw snapshot for log UI (once)
+            # Save the full rotated frame once per track (first quality-passing frame)
             if not tface.raw_image_saved:
                 self.entry_exit_persistence.add_raw_face_image(
-                    track_id=track_id, image=aligned_112, timestamp=loop_start_time)
+                    track_id=track_id, image=raw_frame, timestamp=loop_start_time)
                 tface.raw_image_saved = True
 
             # Submit to recognition worker only if quality improved meaningfully
