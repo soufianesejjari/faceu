@@ -40,7 +40,6 @@ class EntryExitPersistenceThread(threading.Thread):
             try:
                 task = self.q.get(timeout=0.5)
             except queue.Empty:
-                self._sync_pending_events()
                 continue
             handler = dispatch.get(task[0])
             if handler:
@@ -70,6 +69,10 @@ class EntryExitPersistenceThread(threading.Thread):
                 FOREIGN KEY(user) REFERENCES users(employee_id)
             );
         """)
+        # Webhook is real-time only. Mark every pre-existing unsynced row as
+        # already synced so historical data is never pushed to the webhook.
+        # Only events created during this session (synced=0 from now on) fire.
+        self.conn.execute("UPDATE entry_exit SET synced = 1 WHERE synced = 0")
         self.conn.commit()
 
     # ------------------------------------------------------------------ #
@@ -116,6 +119,8 @@ class EntryExitPersistenceThread(threading.Thread):
             (track_id, direction, timestamp)
         )
         self.conn.commit()
+        # If recognition already completed before the line was crossed, fire now
+        self._try_fire_webhook(track_id)
 
     def _update_user(self, track_id, name):
         self.cursor.execute(
@@ -123,6 +128,52 @@ class EntryExitPersistenceThread(threading.Thread):
             (name, track_id)
         )
         self.conn.commit()
+        # If the line was already crossed before recognition completed, fire now
+        if name != 'Unknown':
+            self._try_fire_webhook(track_id)
+
+    def _try_fire_webhook(self, track_id):
+        """Fire webhook for this event only if it is fully resolved: known user + real direction."""
+        self.cursor.execute(
+            "SELECT user, direction, timestamp FROM entry_exit "
+            "WHERE id = ? AND synced = 0",
+            (track_id,)
+        )
+        row = self.cursor.fetchone()
+        if not row:
+            return
+        user, direction, ts = row
+        # Both conditions must be true — only then is the event actionable
+        if user == 'Unknown' or direction == 'pending':
+            return
+        self._send_webhook(track_id, user, direction, ts)
+
+    def _send_webhook(self, track_id, user, direction, ts):
+        import json
+        from urllib import request as urequest, error as uerror
+        webhook_url = os.environ.get('WEBHOOK_URL', '').strip()
+        if not webhook_url:
+            return
+        api_key = os.environ.get('WEBHOOK_API_KEY', '').strip()
+        payload = json.dumps({
+            "id": track_id,
+            "user": user,
+            "action": direction,
+            "timestamp": ts,
+        }).encode('utf-8')
+        req = urequest.Request(webhook_url, method="POST")
+        req.add_header('Content-Type', 'application/json')
+        if api_key:
+            req.add_header('x-api-key', api_key)
+        try:
+            with urequest.urlopen(req, data=payload, timeout=5) as resp:
+                if resp.status in (200, 201, 204):
+                    self.cursor.execute(
+                        "UPDATE entry_exit SET synced = 1 WHERE id = ?", (track_id,)
+                    )
+                    self.conn.commit()
+        except Exception as e:
+            print(f"[Webhook] Failed for event {track_id}: {e}")
 
     def _cleanup_pending(self, lost_id):
         self.cursor.execute(
@@ -142,44 +193,4 @@ class EntryExitPersistenceThread(threading.Thread):
                     pass
         # If direction is 'entered'/'exited' keep both the DB row and the images
 
-    def _sync_pending_events(self):
-        webhook_url = os.environ.get('WEBHOOK_URL', '').strip()
-        if not webhook_url:
-            return
-
-        api_key = os.environ.get('WEBHOOK_API_KEY', '').strip()
-
-        # Select events that are ready to sync
-        self.cursor.execute(
-            "SELECT id, user, direction, timestamp FROM entry_exit "
-            "WHERE user != 'Unknown' AND direction != 'pending' AND synced = 0"
-        )
-        rows = self.cursor.fetchall()
-        if not rows:
-            return
-
-        import json
-        from urllib import request, error
-
-        for row in rows:
-            track_id, user, direction, ts = row
-            data = {
-                "id": track_id,
-                "user": user,
-                "action": direction,
-                "timestamp": ts
-            }
-            
-            req = request.Request(webhook_url, method="POST")
-            req.add_header('Content-Type', 'application/json')
-            if api_key:
-                req.add_header('x-api-key', api_key)
-            
-            try:
-                with request.urlopen(req, data=json.dumps(data).encode('utf-8'), timeout=5) as response:
-                    if response.status in (200, 201, 204):
-                        self.cursor.execute("UPDATE entry_exit SET synced = 1 WHERE id = ?", (track_id,))
-                        self.conn.commit()
-            except Exception as e:
-                print(f"[Webhook Error] Failed to sync event {track_id}: {e}")
 
