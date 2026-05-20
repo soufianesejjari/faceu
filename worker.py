@@ -41,11 +41,24 @@ def _recognition_worker(input_queue, output_queue):
 
         if known_embeddings is not None and len(known_embeddings) > 0:
             similarities = np.dot(known_embeddings, curr_emb)
-            best_idx = int(np.argmax(similarities))
-            best_sim = float(similarities[best_idx])
-            # Return the raw best match — threshold is applied by the caller
-            # so the per-camera recognition_threshold setting takes effect.
-            name = known_names[best_idx]
+            
+            # Group similarities by person name
+            person_scores = {}
+            for name, sim in zip(known_names, similarities):
+                person_scores.setdefault(name, []).append(float(sim))
+            
+            # Compute consolidated score for each person using Top-K average (K=3)
+            consolidated_scores = {}
+            K = 3
+            for name, sims in person_scores.items():
+                sims_sorted = sorted(sims, reverse=True)
+                k_eff = min(len(sims_sorted), K)
+                consolidated_scores[name] = sum(sims_sorted[:k_eff]) / k_eff
+            
+            # Find the best match among all consolidated scores
+            best_name = max(consolidated_scores, key=consolidated_scores.get)
+            best_sim = consolidated_scores[best_name]
+            name = best_name
         else:
             best_sim = 0.0
             name = "Unknown"

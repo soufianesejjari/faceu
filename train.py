@@ -128,15 +128,7 @@ def retrain_and_save_embeddings():
                     logging.info(f"    dropped {n_dropped} outlier image(s) "
                                  f"(low peer-similarity)")
 
-            # 4. Average only the clean embeddings
-            avg = emb_array.mean(axis=0)
-
-            # 5. Normalise the averaged vector
-            norm = np.linalg.norm(avg)
-            if norm > 0:
-                avg /= norm
-
-            # 6. Store quality stats: cohesion = mean pairwise sim of kept images,
+            # 4. Store quality stats: cohesion = mean pairwise sim of kept images,
             #    spread = std of pairwise sims (low spread = consistent captures)
             kept = len(emb_array)
             if kept >= 2:
@@ -157,8 +149,10 @@ def retrain_and_save_embeddings():
                 "spread":       round(spread, 4),    # lower  = less variance between images
             }
 
-            new_embeddings.append(avg)
-            new_names.append(person_name)
+            # 5. Store all individual clean embeddings for this person
+            for emb in emb_array:
+                new_embeddings.append(emb)
+                new_names.append(person_name)
             logging.info(
                 f"  {person_name}: {kept}/{total_images} images kept  "
                 f"cohesion={cohesion:.3f}  spread={spread:.3f}"
