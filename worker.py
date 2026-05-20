@@ -43,7 +43,9 @@ def _recognition_worker(input_queue, output_queue):
             similarities = np.dot(known_embeddings, curr_emb)
             best_idx = int(np.argmax(similarities))
             best_sim = float(similarities[best_idx])
-            name = known_names[best_idx] if best_sim >= 0.4 else "Unknown"
+            # Return the raw best match — threshold is applied by the caller
+            # so the per-camera recognition_threshold setting takes effect.
+            name = known_names[best_idx]
         else:
             best_sim = 0.0
             name = "Unknown"

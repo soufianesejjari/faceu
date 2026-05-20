@@ -80,6 +80,7 @@ def retrain_and_save_embeddings():
 
         new_embeddings = []
         new_names = []
+        quality_stats = {}   # person → {total, kept, outliers, cohesion, spread}
 
         logging.info("Scanning dataset/ and regenerating all embeddings …")
         for person_name in sorted(os.listdir(DATASET_PATH)):
@@ -87,8 +88,8 @@ def retrain_and_save_embeddings():
             if not os.path.isdir(person_dir):
                 continue
 
-            count = 0
-            for img_name in os.listdir(person_dir):
+            person_embs = []
+            for img_name in sorted(os.listdir(person_dir)):
                 img_path = os.path.join(person_dir, img_name)
                 image = cv2.imread(img_path)
                 if image is None:
@@ -97,10 +98,71 @@ def retrain_and_save_embeddings():
                 rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
                 inp = preprocess_for_recognizer(rgb, input_shape)
                 emb = recognizer_session.run([out_name], {in_name: inp})[0].flatten()
-                new_embeddings.append(emb)
-                new_names.append(person_name)
-                count += 1
-            logging.info(f"  {person_name}: {count} images processed")
+                person_embs.append(emb)
+
+            if not person_embs:
+                logging.warning(f"  {person_name}: no usable images, skipped")
+                continue
+
+            total_images = len(person_embs)
+            emb_array = np.array(person_embs, dtype=np.float32)
+
+            # 1. Normalise each embedding
+            norms = np.linalg.norm(emb_array, axis=1, keepdims=True)
+            emb_array = emb_array / np.where(norms > 0, norms, 1.0)
+
+            # 2. Compute internal consistency (pairwise cosine similarities)
+            n_dropped = 0
+            peer_sims_all = None
+            if len(emb_array) >= 4:
+                sim_matrix = emb_array @ emb_array.T          # (N, N)
+                np.fill_diagonal(sim_matrix, 0.0)
+                peer_sims_all = sim_matrix.sum(axis=1) / (len(emb_array) - 1)
+
+                # 3. Remove outliers: drop the bottom 20% by peer similarity
+                cutoff = np.percentile(peer_sims_all, 20)
+                mask = peer_sims_all >= cutoff
+                n_dropped = int((~mask).sum())
+                emb_array = emb_array[mask]
+                if n_dropped:
+                    logging.info(f"    dropped {n_dropped} outlier image(s) "
+                                 f"(low peer-similarity)")
+
+            # 4. Average only the clean embeddings
+            avg = emb_array.mean(axis=0)
+
+            # 5. Normalise the averaged vector
+            norm = np.linalg.norm(avg)
+            if norm > 0:
+                avg /= norm
+
+            # 6. Store quality stats: cohesion = mean pairwise sim of kept images,
+            #    spread = std of pairwise sims (low spread = consistent captures)
+            kept = len(emb_array)
+            if kept >= 2:
+                kept_sim_matrix = emb_array @ emb_array.T
+                np.fill_diagonal(kept_sim_matrix, 0.0)
+                kept_peer_sims = kept_sim_matrix.sum(axis=1) / (kept - 1)
+                cohesion = float(np.mean(kept_peer_sims))
+                spread   = float(np.std(kept_peer_sims))
+            else:
+                cohesion = 1.0
+                spread   = 0.0
+
+            quality_stats[person_name] = {
+                "total_images": total_images,
+                "kept_images":  kept,
+                "outliers":     n_dropped,
+                "cohesion":     round(cohesion, 4),  # higher = more consistent training set
+                "spread":       round(spread, 4),    # lower  = less variance between images
+            }
+
+            new_embeddings.append(avg)
+            new_names.append(person_name)
+            logging.info(
+                f"  {person_name}: {kept}/{total_images} images kept  "
+                f"cohesion={cohesion:.3f}  spread={spread:.3f}"
+            )
 
         if not new_embeddings:
             logging.info("No images found in dataset/.")
@@ -108,12 +170,19 @@ def retrain_and_save_embeddings():
 
         with open(EMBEDDINGS_FILE, "wb") as f:
             pickle.dump({
-                "embeddings":  new_embeddings,
-                "names":       new_names,
-                "model_hash":  get_model_hash(),
+                "embeddings":    new_embeddings,
+                "names":         new_names,
+                "model_hash":    get_model_hash(),
+                "quality_stats": quality_stats,
             }, f)
 
-        logging.info(f"Saved {len(new_embeddings)} embeddings to {EMBEDDINGS_FILE}")
+        for name, s in quality_stats.items():
+            flag = " ⚠ LOW COHESION" if s["cohesion"] < 0.30 else ""
+            logging.info(
+                f"  {name}: {s['kept_images']}/{s['total_images']} kept, "
+                f"outliers={s['outliers']}, cohesion={s['cohesion']:.3f}{flag}"
+            )
+        logging.info(f"Saved {len(new_embeddings)} person embeddings to {EMBEDDINGS_FILE}")
         reload_embeddings()
 
 

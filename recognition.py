@@ -137,6 +137,9 @@ class FaceRecognizer:
             track_id = self._pending_jobs.pop(job_id, None)
             if track_id is None:
                 continue
+            # Apply per-camera threshold (worker returns raw best match)
+            if sim < self.recognition_threshold:
+                name = 'Unknown'
             # Always write to DB — face may have left frame before result arrived
             self.entry_exit_persistence.update_user(track_id, name)
             # Update live overlay only if track is still visible

@@ -25,7 +25,7 @@ def _env(key, default):
 
 # ── Live system defaults from .env ────────────────────────────────────────────
 DEFAULT_RECOGNITION_MODEL     = _env("RECOGNITION_MODEL",     "w600k_r50.onnx")
-DEFAULT_RECOGNITION_THRESHOLD = _env("RECOGNITION_THRESHOLD", 0.40)
+DEFAULT_RECOGNITION_THRESHOLD = _env("RECOGNITION_THRESHOLD", 0.50)
 DEFAULT_TARGET_FPS            = _env("TARGET_FPS",            5)
 DEFAULT_MOTION_FPS            = _env("MOTION_FPS",            2)
 DEFAULT_NO_FACE_TIMEOUT       = _env("NO_FACE_TIMEOUT",       10.0)
@@ -476,17 +476,32 @@ def entry_exit_image(id):
 
 @app.route('/face_datasets')
 def face_datasets():
+    import pickle as _pickle
     dataset_path = 'dataset'
+    embeddings_file = os.path.join(os.path.dirname(__file__), 'known_faces_embeddings.pkl')
+
+    # Load quality stats from the pkl if available
+    quality_stats = {}
+    if os.path.exists(embeddings_file):
+        try:
+            with open(embeddings_file, 'rb') as f:
+                pkg = _pickle.load(f)
+            quality_stats = pkg.get('quality_stats', {})
+        except Exception:
+            pass
+
     users = []
     if os.path.exists(dataset_path):
         for user_name in sorted(os.listdir(dataset_path)):
             user_dir = os.path.join(dataset_path, user_name)
             if os.path.isdir(user_dir):
                 images = sorted([f for f in os.listdir(user_dir) if f.endswith('.png')])
+                qs = quality_stats.get(user_name, {})
                 users.append({
-                    'name': user_name,
-                    'images': images,
-                    'image_count': len(images)
+                    'name':        user_name,
+                    'images':      images,
+                    'image_count': len(images),
+                    'quality':     qs,   # {total_images, kept_images, outliers, cohesion, spread}
                 })
     return render_template('face_datasets.html', users=users)
 
